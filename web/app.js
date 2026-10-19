@@ -37,6 +37,7 @@ const animCtx = animCanvas.getContext("2d");
 // DOM Elements
 const trackSelect = document.getElementById("track-select");
 const btnPlay = document.getElementById("btn-play");
+const canvasPlaybackBadge = document.getElementById("canvas-playback-badge");
 const btnPrev = document.getElementById("btn-prev");
 const btnNext = document.getElementById("btn-next");
 const frameIndicator = document.getElementById("frame-indicator");
@@ -53,8 +54,26 @@ const patchInstruction = document.getElementById("patch-instruction");
 const btnSendTask = document.getElementById("btn-send-task");
 const taskNotice = document.getElementById("task-notice");
 const inspectSection = document.getElementById("inspect-section");
+const inspectContent = document.getElementById("inspect-content");
+const inspectEmpty = document.getElementById("inspect-empty");
 const inspectContextImg = document.getElementById("inspect-context-img");
 const inspectMicroImg = document.getElementById("inspect-micro-img");
+
+function setInspectData(hasData, contextSrc = null, microSrc = null) {
+  if (hasData) {
+    inspectSection.classList.add("has-data");
+    if (contextSrc) inspectContextImg.src = contextSrc;
+    if (microSrc) inspectMicroImg.src = microSrc;
+    if (inspectContent) inspectContent.style.display = "block";
+    if (inspectEmpty) inspectEmpty.style.display = "none";
+  } else {
+    inspectSection.classList.remove("has-data");
+    if (inspectContent) inspectContent.style.display = "none";
+    if (inspectEmpty) inspectEmpty.style.display = "flex";
+  }
+}
+setInspectData(false);
+
 const statusMsg = document.getElementById("status-msg");
 
 const filePicker = document.getElementById("file-picker");
@@ -132,14 +151,27 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-function togglePlayPause() {
-  isPlaying = !isPlaying;
+function updatePlaybackState(playing) {
+  isPlaying = playing;
   btnPlay.textContent = isPlaying ? "⏸ 정지 [Space]" : "▶ 재생 [Space]";
+  if (canvasPlaybackBadge) {
+    canvasPlaybackBadge.style.display = isPlaying ? "flex" : "none";
+  }
   if (isPlaying) {
     startAnimation();
   } else {
     clearInterval(animTimer);
   }
+}
+
+if (canvasPlaybackBadge) {
+  canvasPlaybackBadge.addEventListener("click", () => {
+    updatePlaybackState(!isPlaying);
+  });
+}
+
+function togglePlayPause() {
+  updatePlaybackState(!isPlaying);
 }
 
 btnPlay.addEventListener("click", togglePlayPause);
@@ -307,9 +339,11 @@ btnSendTask.addEventListener("click", async () => {
     if (data.status === "ok") {
       showStatus("AI 작업 요청 저장 완료!", "#34a853");
       
-      inspectSection.style.display = "block";
-      inspectContextImg.src = "/" + data.task.inspect_views.context_image + "?t=" + Date.now();
-      inspectMicroImg.src = "/" + data.task.inspect_views.micro_image + "?t=" + Date.now();
+      setInspectData(
+        true,
+        "/" + data.task.inspect_views.context_image + "?t=" + Date.now(),
+        "/" + data.task.inspect_views.micro_image + "?t=" + Date.now()
+      );
 
       taskNotice.style.display = "block";
       taskNotice.innerHTML = `
@@ -440,11 +474,7 @@ function selectTrack(trackIdx, preserveFrame = false) {
   // Instant synchronous render of the frame!
   renderCurrentFrame();
 
-  if (isPlaying) {
-    startAnimation();
-  } else {
-    clearInterval(animTimer);
-  }
+  updatePlaybackState(isPlaying);
 }
 
 function loadImage(src) {
@@ -632,7 +662,7 @@ setInterval(async () => {
 
       if (!isInitial) {
         await loadProjectAndAllFrames(true);
-        inspectSection.style.display = "none";
+        setInspectData(false);
         taskNotice.style.display = "block";
         taskNotice.innerHTML = "<strong>✨ AI 작업 완료!</strong><br>수정된 최신 아틀라스가 화면에 반영되었습니다.";
         setTimeout(() => {

@@ -26,9 +26,6 @@
           <option value="vertical">📱 세로형 (피벗 모니터)</option>
         </select>
       </div>
-      <div class="row status-area">
-        <span id="status-msg"></span>
-      </div>
     </div>
   </header>
 
@@ -86,6 +83,10 @@
       </div>
 
       <div id="canvas-container">
+        <div id="canvas-playback-badge" class="playback-badge" style="display: none;" title="재생 중 (클릭하거나 Space를 눌러 일시정지)">
+          <span class="playback-pulse-dot"></span>
+          <span class="playback-badge-text">▶ 재생 중</span>
+        </div>
         <canvas id="editor-canvas"></canvas>
       </div>
 
@@ -96,11 +97,8 @@
 
     <!-- Right Column: AI Feedback & Task Request -->
     <aside id="right-panel">
-      <div class="panel-section">
+      <div class="panel-section" id="task-form-section">
         <h3>AI에게 수정 요청 (Feedback Task)</h3>
-        <p class="desc">
-          캔버스에서 어색한 부위를 드래그로 지정하고 요구사항을 작성하면, AI가 16배 확대 인스펙션 뷰와 함께 전달받아 아틀라스를 수정합니다.
-        </p>
 
         <div class="form-group">
           <label>수정 대상 정보:</label>
@@ -126,20 +124,29 @@
       </div>
 
       <!-- Inspection Preview -->
-      <div class="panel-section" id="inspect-section" style="display: none;">
-        <h4>생성된 비전 검수 뷰 (16x 확대)</h4>
-        <div class="inspect-grid">
-          <div class="inspect-card">
-            <span class="label">전체 컨텍스트</span>
-            <div class="img-wrap">
-              <img id="inspect-context-img">
+      <div class="panel-section" id="inspect-section">
+        <div id="inspect-content" style="display: none;">
+          <h4>생성된 비전 검수 뷰 (16x 확대)</h4>
+          <div class="inspect-grid">
+            <div class="inspect-card">
+              <span class="label">전체 컨텍스트</span>
+              <div class="img-wrap">
+                <img id="inspect-context-img">
+              </div>
+            </div>
+            <div class="inspect-card">
+              <span class="label">마이크로 좌표 격자</span>
+              <div class="img-wrap">
+                <img id="inspect-micro-img">
+              </div>
             </div>
           </div>
-          <div class="inspect-card">
-            <span class="label">마이크로 좌표 격자</span>
-            <div class="img-wrap">
-              <img id="inspect-micro-img">
-            </div>
+        </div>
+        <div id="inspect-empty" class="inspect-empty-state">
+          <h4>비전 검수 뷰 (16x 확대)</h4>
+          <div class="inspect-placeholder-box">
+            <span class="placeholder-icon">🔍</span>
+            <p>수정 요청을 전송하면 생성된<br>16배 확대 검수 뷰가 여기에 표시됩니다.</p>
           </div>
         </div>
       </div>
