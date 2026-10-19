@@ -1,24 +1,22 @@
 /**
  * PixelWork Inspector Controller.
  * Features:
- * - Direct zoom scale input (1 to 32)
+ * - Pre-loads ALL frames into in-memory canvases at atlas load time (instant, zero-latency playback & track switching)
+ * - Loading overlay during atlas fetch & processing
+ * - Instant frame & preview rendering when selecting tracks even while paused
  * - Spacebar and Arrow key controls without losing focus to buttons/sliders
- * - On-demand reload (no hot reload overhead)
- * - Immediate frame & animation preview update on track selection even when paused
+ * - Direct scale input (1 to 32)
  * - Clear selection on ESC or track switch
  * - File picker for easy image selection & upload
- * - Auto-clear text & selection after task dispatch
  */
 
 let project = null;
+let loadedTracks = []; // In-memory pre-sliced frames: loadedTracks[trackIdx].frames[frameIdx].canvas
 let currentTrackIndex = 0;
 let currentFrameIndex = 0;
 let isPlaying = true;
 let animTimer = null;
 let frameDelayMs = 120; // Default 120ms
-
-let currentFrameImg = null;
-let prevFrameImg = null;
 
 // Editor Canvas State
 let canvasScale = 16;
@@ -60,7 +58,19 @@ const filePicker = document.getElementById("file-picker");
 const btnFilePick = document.getElementById("btn-file-pick");
 const fileNameDisp = document.getElementById("file-name-disp");
 
-// Blur buttons after click so Spacebar doesn't re-trigger button clicks
+const loadingOverlay = document.getElementById("loading-overlay");
+const loadingText = document.getElementById("loading-text");
+
+function showLoading(msg) {
+  loadingText.textContent = msg || "로딩 중...";
+  loadingOverlay.style.display = "flex";
+}
+
+function hideLoading() {
+  loadingOverlay.style.display = "none";
+}
+
+// Blur buttons after click so Spacebar doesn't trigger button clicks
 document.querySelectorAll("button").forEach(btn => {
   btn.addEventListener("click", () => {
     btn.blur();
@@ -72,7 +82,7 @@ window.addEventListener("keydown", (e) => {
   const active = document.activeElement;
   const isTextInput = active && (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && (active.type === "text" || active.type === "number")));
 
-  // ESC: Always clears selection even when input is focused
+  // ESC: Always clears selection
   if (e.code === "Escape") {
     e.preventDefault();
     clearSelection();
@@ -129,12 +139,12 @@ scaleInput.addEventListener("input", (e) => {
   if (project) {
     editorCanvas.width = project.frame_width * canvasScale;
     editorCanvas.height = project.frame_height * canvasScale;
-    renderEditor();
+    renderCurrentFrame();
   }
 });
 
-onionToggle.addEventListener("change", renderEditor);
-gridToggle.addEventListener("change", renderEditor);
+onionToggle.addEventListener("change", renderCurrentFrame);
+gridToggle.addEventListener("change", renderCurrentFrame);
 
 document.getElementById("btn-clear-selection").addEventListener("click", clearSelection);
 
@@ -142,7 +152,7 @@ function clearSelection() {
   selectedBBox = null;
   bboxCoords.textContent = "마우스로 어색한 부위를 드래그하세요";
   taskBBoxDisp.textContent = "영역 미선택";
-  renderEditor();
+  renderCurrentFrame();
 }
 
 // --- 4. File Picker & Upload Handler ---
@@ -157,7 +167,7 @@ filePicker.addEventListener("change", async (e) => {
   const fw = parseInt(document.getElementById("input-fw").value, 10) || 24;
   const fh = parseInt(document.getElementById("input-fh").value, 10) || 32;
 
-  showStatus("파일 업로드 및 슬라이싱 중...", "#1a73e8");
+  showLoading("파일 업로드 및 슬라이싱 중...");
   try {
     const res = await fetch("/api/upload", {
       method: "POST",
@@ -173,11 +183,13 @@ filePicker.addEventListener("change", async (e) => {
       fileNameDisp.textContent = data.file_path;
       fileNameDisp.title = data.file_path;
       showStatus("업로드 완료!", "#34a853");
-      await loadProject(false);
+      await loadProjectAndAllFrames(false);
     } else {
+      hideLoading();
       showStatus("에러: " + data.message, "#d93025");
     }
   } catch (err) {
+    hideLoading();
     showStatus("업로드 실패: " + err, "#d93025");
   }
 });
@@ -188,7 +200,7 @@ document.getElementById("btn-slice").addEventListener("click", async () => {
   const frame_w = parseInt(document.getElementById("input-fw").value, 10) || 24;
   const frame_h = parseInt(document.getElementById("input-fh").value, 10) || 32;
   
-  showStatus("아틀라스 다시 읽는 중...", "#1a73e8");
+  showLoading("아틀라스를 읽고 전체 프레임을 메모리에 로드하는 중...");
   try {
     const res = await fetch("/api/slice", {
       method: "POST",
@@ -197,12 +209,14 @@ document.getElementById("btn-slice").addEventListener("click", async () => {
     });
     const data = await res.json();
     if (data.status === "ok") {
+      await loadProjectAndAllFrames(true);
       showStatus("아틀라스 동기화 완료!", "#34a853");
-      await loadProject(true);
     } else {
+      hideLoading();
       showStatus("에러: " + data.message, "#d93025");
     }
   } catch (err) {
+    hideLoading();
     showStatus("요청 실패: " + err, "#d93025");
   }
 });
@@ -220,7 +234,7 @@ btnSendTask.addEventListener("click", async () => {
     return;
   }
   
-  const curTrack = project.tracks[currentTrackIndex];
+  const curTrack = loadedTracks[currentTrackIndex];
   const curFrame = curTrack.frames[currentFrameIndex];
 
   showStatus("AI 작업 전송 중...", "#1a73e8");
@@ -243,7 +257,6 @@ btnSendTask.addEventListener("click", async () => {
     if (data.status === "ok") {
       showStatus("AI 작업 요청 저장 완료!", "#34a853");
       
-      // Show inspect preview views
       inspectSection.style.display = "block";
       inspectContextImg.src = "/" + data.task.inspect_views.context_image + "?t=" + Date.now();
       inspectMicroImg.src = "/" + data.task.inspect_views.micro_image + "?t=" + Date.now();
@@ -256,7 +269,6 @@ btnSendTask.addEventListener("click", async () => {
         채팅창에서 <strong>"방금 보낸 작업 진행해줘"</strong>라고 말씀하시면 즉시 수정을 진행합니다.
       `;
 
-      // Clear input and selection
       patchInstruction.value = "";
       clearSelection();
     } else {
@@ -269,119 +281,141 @@ btnSendTask.addEventListener("click", async () => {
   }
 });
 
-// --- 7. Project Loader & Frame Management ---
-async function loadProject(preserveSelection = false) {
+// --- 7. In-Memory Preloader & Track Management ---
+async function loadProjectAndAllFrames(preserveSelection = false) {
+  showLoading("아틀라스 이미지 및 메타데이터 로딩 중...");
   try {
-    const res = await fetch("/api/project?t=" + Date.now());
-    if (!res.ok) return;
-    project = await res.json();
-    
-    document.getElementById("input-fw").value = project.frame_width;
-    document.getElementById("input-fh").value = project.frame_height;
+    // 1. Fetch metadata
+    const metaRes = await fetch("/api/project?t=" + Date.now());
+    if (!metaRes.ok) throw new Error("Metadata not found");
+    project = await metaRes.json();
 
-    framePixelCanvas.width = project.frame_width;
-    framePixelCanvas.height = project.frame_height;
+    // 2. Fetch full atlas image
+    const atlasImg = await loadImage("/api/atlas?t=" + Date.now());
+
+    // 3. Pre-slice ALL frames into in-memory canvases
+    const fw = project.frame_width;
+    const fh = project.frame_height;
+    loadedTracks = [];
+
+    project.tracks.forEach(tMeta => {
+      const row = tMeta.id;
+      const trackObj = {
+        id: row,
+        name: tMeta.name,
+        frame_count: tMeta.frame_count,
+        frames: []
+      };
+
+      tMeta.frames.forEach(fMeta => {
+        const col = fMeta.index;
+        const offCanvas = document.createElement("canvas");
+        offCanvas.width = fw;
+        offCanvas.height = fh;
+        const oCtx = offCanvas.getContext("2d");
+        oCtx.imageSmoothingEnabled = false;
+        // Slice directly from atlasImg
+        oCtx.drawImage(
+          atlasImg,
+          col * fw, row * fh, fw, fh, // source rect
+          0, 0, fw, fh                // dest rect
+        );
+
+        trackObj.frames.push({
+          index: col,
+          file: fMeta.file,
+          canvas: offCanvas
+        });
+      });
+
+      loadedTracks.push(trackObj);
+    });
+
+    // 4. Update UI dimensions
+    document.getElementById("input-fw").value = fw;
+    document.getElementById("input-fh").value = fh;
+
+    framePixelCanvas.width = fw;
+    framePixelCanvas.height = fh;
 
     const scaleVal = parseInt(scaleInput.value, 10);
     if (!isNaN(scaleVal) && scaleVal >= 1 && scaleVal <= 32) {
       canvasScale = scaleVal;
     }
 
-    editorCanvas.width = project.frame_width * canvasScale;
-    editorCanvas.height = project.frame_height * canvasScale;
+    editorCanvas.width = fw * canvasScale;
+    editorCanvas.height = fh * canvasScale;
 
-    animCanvas.width = project.frame_width * 4;
-    animCanvas.height = project.frame_height * 4;
+    animCanvas.width = fw * 4;
+    animCanvas.height = fh * 4;
 
+    // 5. Populate Track Selector
     const prevTrack = currentTrackIndex;
     trackSelect.innerHTML = "";
-    project.tracks.forEach((t, idx) => {
+    loadedTracks.forEach((t, idx) => {
       const opt = document.createElement("option");
       opt.value = idx;
       opt.textContent = `${t.name} (${t.frame_count} frames)`;
       trackSelect.appendChild(opt);
     });
 
-    if (preserveSelection && project.tracks[prevTrack]) {
+    if (preserveSelection && loadedTracks[prevTrack]) {
       currentTrackIndex = prevTrack;
     } else {
       currentTrackIndex = 0;
     }
     trackSelect.selectedIndex = currentTrackIndex;
 
-    await selectTrack(currentTrackIndex, preserveSelection);
+    hideLoading();
+
+    // 6. Instantly render the selected track!
+    selectTrack(currentTrackIndex, preserveSelection);
   } catch (err) {
-    console.error("Error loading project:", err);
+    hideLoading();
+    console.error("Error preloading atlas:", err);
+    showStatus("로딩 에러: " + err, "#d93025");
   }
 }
 
-// Track selection handlers (support change, click, input)
+// Track selection handlers (instant response!)
 trackSelect.addEventListener("change", (e) => {
   selectTrack(parseInt(e.target.value, 10), false);
   trackSelect.blur();
 });
 
-async function selectTrack(trackIdx, preserveFrame = false) {
+function selectTrack(trackIdx, preserveFrame = false) {
+  if (!loadedTracks || loadedTracks.length === 0) return;
   currentTrackIndex = trackIdx;
   if (!preserveFrame) {
     currentFrameIndex = 0;
   }
   clearSelection();
 
-  // Load first frame immediately
-  await loadFrame(currentFrameIndex, true);
+  // Instant synchronous render of the first frame!
+  renderCurrentFrame();
 
-  // If currently playing, restart animation timer for the new track
   if (isPlaying) {
     startAnimation();
+  } else {
+    clearInterval(animTimer);
   }
-}
-
-async function loadFrame(index, forceReload = true) {
-  if (!project || !project.tracks[currentTrackIndex]) return;
-  const curTrack = project.tracks[currentTrackIndex];
-  if (!curTrack.frames || curTrack.frames.length === 0) return;
-
-  currentFrameIndex = index % curTrack.frames.length;
-  const frameInfo = curTrack.frames[currentFrameIndex];
-  curFrameName.textContent = `${curTrack.name} [${currentFrameIndex + 1} / ${curTrack.frame_count}]`;
-  frameIndicator.textContent = `${currentFrameIndex + 1} / ${curTrack.frame_count}`;
-
-  const cacheBuster = forceReload ? `?t=${Date.now()}` : "";
-  const curUrl = `/api/frame?file=${frameInfo.file}${cacheBuster}`;
-
-  const prevIdx = (currentFrameIndex - 1 + curTrack.frame_count) % curTrack.frame_count;
-  const prevFrameInfo = curTrack.frames[prevIdx];
-  const prevUrl = `/api/frame?file=${prevFrameInfo.file}${cacheBuster}`;
-
-  // Load both images in parallel
-  const [curImg, pImg] = await Promise.all([loadImage(curUrl), loadImage(prevUrl)]);
-  currentFrameImg = curImg;
-  prevFrameImg = pImg;
-
-  frameCtx.clearRect(0, 0, framePixelCanvas.width, framePixelCanvas.height);
-  if (currentFrameImg) {
-    frameCtx.drawImage(currentFrameImg, 0, 0);
-  }
-
-  renderEditor();
 }
 
 function loadImage(src) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => resolve(img);
+    img.onerror = () => reject(new Error("Failed to load image: " + src));
     img.src = src;
   });
 }
 
 function stepFrame(delta) {
-  if (!project || !project.tracks[currentTrackIndex]) return;
-  const curTrack = project.tracks[currentTrackIndex];
+  if (!loadedTracks || !loadedTracks[currentTrackIndex]) return;
+  const curTrack = loadedTracks[currentTrackIndex];
   if (curTrack.frame_count === 0) return;
-  const nextIdx = (currentFrameIndex + delta + curTrack.frame_count) % curTrack.frame_count;
-  loadFrame(nextIdx, false);
+  currentFrameIndex = (currentFrameIndex + delta + curTrack.frame_count) % curTrack.frame_count;
+  renderCurrentFrame();
 }
 
 function startAnimation() {
@@ -392,39 +426,56 @@ function startAnimation() {
   }, frameDelayMs);
 }
 
-// --- 8. Editor Rendering & Box Selection ---
-function renderEditor() {
-  if (!project) return;
+// --- 8. Instant Synchronous Canvas Rendering (0ms) ---
+function renderCurrentFrame() {
+  if (!loadedTracks || !loadedTracks[currentTrackIndex]) return;
+  const curTrack = loadedTracks[currentTrackIndex];
+  if (!curTrack.frames || curTrack.frames.length === 0) return;
+
+  const curFrame = curTrack.frames[currentFrameIndex];
+  if (!curFrame) return;
+
   const fw = project.frame_width;
   const fh = project.frame_height;
 
-  // 1. Animation Preview
+  // Update text labels
+  curFrameName.textContent = `${curTrack.name} [${currentFrameIndex + 1} / ${curTrack.frame_count}]`;
+  frameIndicator.textContent = `${currentFrameIndex + 1} / ${curTrack.frame_count}`;
+
+  // Get previous frame for onion skinning
+  const prevIdx = (currentFrameIndex - 1 + curTrack.frame_count) % curTrack.frame_count;
+  const prevFrame = curTrack.frames[prevIdx];
+
+  // 1. Render Animation Preview Canvas
   animCtx.clearRect(0, 0, animCanvas.width, animCanvas.height);
   animCtx.imageSmoothingEnabled = false;
-  if (onionToggle.checked && prevFrameImg) {
+
+  if (onionToggle.checked && prevFrame && prevFrame.canvas) {
     animCtx.globalAlpha = 0.35;
-    animCtx.drawImage(prevFrameImg, 0, 0, animCanvas.width, animCanvas.height);
+    animCtx.drawImage(prevFrame.canvas, 0, 0, animCanvas.width, animCanvas.height);
     animCtx.globalAlpha = 1.0;
   }
-  if (currentFrameImg) {
-    animCtx.drawImage(currentFrameImg, 0, 0, animCanvas.width, animCanvas.height);
+  if (curFrame.canvas) {
+    animCtx.drawImage(curFrame.canvas, 0, 0, animCanvas.width, animCanvas.height);
   }
 
-  // 2. Editor Canvas
+  // 2. Render Main Editor Canvas
   editorCtx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
   editorCtx.imageSmoothingEnabled = false;
 
   // Onion skin underneath
-  if (onionToggle.checked && prevFrameImg) {
-    editorCtx.globalAlpha = 0.3;
-    editorCtx.drawImage(prevFrameImg, 0, 0, editorCanvas.width, editorCanvas.height);
+  if (onionToggle.checked && prevFrame && prevFrame.canvas) {
+    editorCtx.globalAlpha = 0.28;
+    editorCtx.drawImage(prevFrame.canvas, 0, 0, editorCanvas.width, editorCanvas.height);
     editorCtx.globalAlpha = 1.0;
   }
 
-  // Current frame pixels
-  editorCtx.drawImage(framePixelCanvas, 0, 0, editorCanvas.width, editorCanvas.height);
+  // Draw current frame scaled
+  if (curFrame.canvas) {
+    editorCtx.drawImage(curFrame.canvas, 0, 0, editorCanvas.width, editorCanvas.height);
+  }
 
-  // Pixel Grid Overlay (Fine light lines)
+  // Pixel Grid Overlay
   if (gridToggle.checked) {
     editorCtx.strokeStyle = "rgba(0, 0, 0, 0.12)";
     editorCtx.lineWidth = 1;
@@ -442,7 +493,7 @@ function renderEditor() {
     }
   }
 
-  // Selection Bounding Box Highlight (Bold Red)
+  // Selection Bounding Box Highlight
   if (selectedBBox) {
     const [x1, y1, x2, y2] = selectedBBox;
     editorCtx.strokeStyle = "#d93025";
@@ -490,7 +541,7 @@ window.addEventListener("mousemove", (e) => {
   const coordStr = `X: ${x1}~${x2}, Y: ${y1}~${y2} (${x2 - x1}×${y2 - y1} px)`;
   bboxCoords.textContent = coordStr;
   taskBBoxDisp.textContent = coordStr;
-  renderEditor();
+  renderCurrentFrame();
 });
 
 window.addEventListener("mouseup", () => {
@@ -505,5 +556,5 @@ function showStatus(text, color = "#1a73e8") {
   }, 4000);
 }
 
-// Initial Boot
-loadProject();
+// Initial Boot: Preload all frames into RAM
+loadProjectAndAllFrames();

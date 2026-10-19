@@ -45,6 +45,13 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
         elif path == "/api/project":
             self.send_json_file("data/metadata.json")
 
+        elif path == "/api/atlas":
+            src = PROJECT_STATE["source_image"]
+            if os.path.exists(src):
+                self.serve_file(src, "image/png")
+            else:
+                self.send_error(404, "Atlas not found")
+
         elif path == "/api/frame":
             frame_file = query.get("file", [None])[0]
             if frame_file:
