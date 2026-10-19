@@ -1,7 +1,8 @@
 /**
  * PixelWork Inspector Controller.
  * Features:
- * - Pre-loads ALL frames into in-memory canvases at atlas load time (instant, zero-latency playback & track switching)
+ * - High-DPI (Retina / 125% / 150% Windows Scale) pixel-perfect rendering without distortion
+ * - Pre-loads ALL frames into in-memory canvases at atlas load time (instant 0ms response)
  * - Loading overlay during atlas fetch & processing
  * - Instant frame & preview rendering when selecting tracks even while paused
  * - Spacebar and Arrow key controls without losing focus to buttons/sliders
@@ -136,11 +137,8 @@ scaleInput.addEventListener("input", (e) => {
   if (isNaN(val) || val < 1) val = 1;
   if (val > 32) val = 32;
   canvasScale = val;
-  if (project) {
-    editorCanvas.width = project.frame_width * canvasScale;
-    editorCanvas.height = project.frame_height * canvasScale;
-    renderCurrentFrame();
-  }
+  updateCanvasDimensions();
+  renderCurrentFrame();
 });
 
 onionToggle.addEventListener("change", renderCurrentFrame);
@@ -155,7 +153,36 @@ function clearSelection() {
   renderCurrentFrame();
 }
 
-// --- 4. File Picker & Upload Handler ---
+// --- 4. High-DPI / Fractional Scale Compensation ---
+function updateCanvasDimensions() {
+  if (!project) return;
+  const fw = project.frame_width;
+  const fh = project.frame_height;
+  const dpr = window.devicePixelRatio || 1;
+
+  // Map each sprite pixel to an EXACT integer number of physical screen pixels
+  const physicalScale = Math.max(1, Math.round(canvasScale * dpr));
+
+  editorCanvas.width = fw * physicalScale;
+  editorCanvas.height = fh * physicalScale;
+  editorCanvas.style.width = (editorCanvas.width / dpr) + "px";
+  editorCanvas.style.height = (editorCanvas.height / dpr) + "px";
+
+  // Animation preview (4x logical)
+  const animPhysicalScale = Math.max(1, Math.round(4 * dpr));
+  animCanvas.width = fw * animPhysicalScale;
+  animCanvas.height = fh * animPhysicalScale;
+  animCanvas.style.width = (animCanvas.width / dpr) + "px";
+  animCanvas.style.height = (animCanvas.height / dpr) + "px";
+}
+
+// Listen to OS DPI / Zoom changes
+window.addEventListener("resize", () => {
+  updateCanvasDimensions();
+  renderCurrentFrame();
+});
+
+// --- 5. File Picker & Upload Handler ---
 btnFilePick.addEventListener("click", () => {
   filePicker.click();
 });
@@ -194,7 +221,7 @@ filePicker.addEventListener("change", async (e) => {
   }
 });
 
-// --- 5. On-Demand Reload Atlas Button ---
+// --- 6. On-Demand Reload Atlas Button ---
 document.getElementById("btn-slice").addEventListener("click", async () => {
   const image_path = fileNameDisp.textContent.trim() || "src/len_atlas.png";
   const frame_w = parseInt(document.getElementById("input-fw").value, 10) || 24;
@@ -221,7 +248,7 @@ document.getElementById("btn-slice").addEventListener("click", async () => {
   }
 });
 
-// --- 6. AI Task Dispatch ---
+// --- 7. AI Task Dispatch ---
 btnSendTask.addEventListener("click", async () => {
   if (!selectedBBox) {
     alert("캔버스에서 어색한 부위를 먼저 마우스로 드래그하여 선택하세요.");
@@ -281,7 +308,7 @@ btnSendTask.addEventListener("click", async () => {
   }
 });
 
-// --- 7. In-Memory Preloader & Track Management ---
+// --- 8. In-Memory Preloader & Track Management ---
 async function loadProjectAndAllFrames(preserveSelection = false) {
   showLoading("아틀라스 이미지 및 메타데이터 로딩 중...");
   try {
@@ -343,11 +370,7 @@ async function loadProjectAndAllFrames(preserveSelection = false) {
       canvasScale = scaleVal;
     }
 
-    editorCanvas.width = fw * canvasScale;
-    editorCanvas.height = fh * canvasScale;
-
-    animCanvas.width = fw * 4;
-    animCanvas.height = fh * 4;
+    updateCanvasDimensions();
 
     // 5. Populate Track Selector
     const prevTrack = currentTrackIndex;
@@ -391,7 +414,7 @@ function selectTrack(trackIdx, preserveFrame = false) {
   }
   clearSelection();
 
-  // Instant synchronous render of the first frame!
+  // Instant synchronous render of the frame!
   renderCurrentFrame();
 
   if (isPlaying) {
@@ -426,7 +449,7 @@ function startAnimation() {
   }, frameDelayMs);
 }
 
-// --- 8. Instant Synchronous Canvas Rendering (0ms) ---
+// --- 9. Instant Synchronous Canvas Rendering (Pixel-Perfect) ---
 function renderCurrentFrame() {
   if (!loadedTracks || !loadedTracks[currentTrackIndex]) return;
   const curTrack = loadedTracks[currentTrackIndex];
@@ -448,7 +471,7 @@ function renderCurrentFrame() {
 
   // 1. Render Animation Preview Canvas
   animCtx.clearRect(0, 0, animCanvas.width, animCanvas.height);
-  animCtx.imageSmoothingEnabled = false;
+  disableSmoothing(animCtx);
 
   if (onionToggle.checked && prevFrame && prevFrame.canvas) {
     animCtx.globalAlpha = 0.35;
@@ -461,7 +484,7 @@ function renderCurrentFrame() {
 
   // 2. Render Main Editor Canvas
   editorCtx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
-  editorCtx.imageSmoothingEnabled = false;
+  disableSmoothing(editorCtx);
 
   // Onion skin underneath
   if (onionToggle.checked && prevFrame && prevFrame.canvas) {
@@ -470,25 +493,30 @@ function renderCurrentFrame() {
     editorCtx.globalAlpha = 1.0;
   }
 
-  // Draw current frame scaled
+  // Draw current frame scaled to exact integer pixel grid
   if (curFrame.canvas) {
     editorCtx.drawImage(curFrame.canvas, 0, 0, editorCanvas.width, editorCanvas.height);
   }
 
-  // Pixel Grid Overlay
-  if (gridToggle.checked) {
+  // Pixel Grid Overlay (Only when zoom is large enough >= 4 to avoid covering pixels)
+  if (gridToggle.checked && canvasScale >= 4) {
     editorCtx.strokeStyle = "rgba(0, 0, 0, 0.12)";
     editorCtx.lineWidth = 1;
+    const cellW = editorCanvas.width / fw;
+    const cellH = editorCanvas.height / fh;
+
     for (let x = 0; x <= fw; x++) {
+      const gx = Math.round(x * cellW);
       editorCtx.beginPath();
-      editorCtx.moveTo(x * canvasScale, 0);
-      editorCtx.lineTo(x * canvasScale, fh * canvasScale);
+      editorCtx.moveTo(gx, 0);
+      editorCtx.lineTo(gx, editorCanvas.height);
       editorCtx.stroke();
     }
     for (let y = 0; y <= fh; y++) {
+      const gy = Math.round(y * cellH);
       editorCtx.beginPath();
-      editorCtx.moveTo(0, y * canvasScale);
-      editorCtx.lineTo(fw * canvasScale, y * canvasScale);
+      editorCtx.moveTo(0, gy);
+      editorCtx.lineTo(editorCanvas.width, gy);
       editorCtx.stroke();
     }
   }
@@ -496,38 +524,42 @@ function renderCurrentFrame() {
   // Selection Bounding Box Highlight
   if (selectedBBox) {
     const [x1, y1, x2, y2] = selectedBBox;
+    const cellW = editorCanvas.width / fw;
+    const cellH = editorCanvas.height / fh;
+    const bx = Math.round(x1 * cellW);
+    const by = Math.round(y1 * cellH);
+    const bw = Math.round((x2 - x1) * cellW);
+    const bh = Math.round((y2 - y1) * cellH);
+
     editorCtx.strokeStyle = "#d93025";
     editorCtx.lineWidth = 2;
-    editorCtx.strokeRect(
-      x1 * canvasScale,
-      y1 * canvasScale,
-      (x2 - x1) * canvasScale,
-      (y2 - y1) * canvasScale
-    );
+    editorCtx.strokeRect(bx, by, bw, bh);
     editorCtx.fillStyle = "rgba(217, 48, 37, 0.18)";
-    editorCtx.fillRect(
-      x1 * canvasScale,
-      y1 * canvasScale,
-      (x2 - x1) * canvasScale,
-      (y2 - y1) * canvasScale
-    );
+    editorCtx.fillRect(bx, by, bw, bh);
   }
 }
 
-// Mouse Drag Selection
+function disableSmoothing(ctx) {
+  ctx.imageSmoothingEnabled = false;
+  if ('webkitImageSmoothingEnabled' in ctx) ctx.webkitImageSmoothingEnabled = false;
+  if ('mozImageSmoothingEnabled' in ctx) ctx.mozImageSmoothingEnabled = false;
+  if ('msImageSmoothingEnabled' in ctx) ctx.msImageSmoothingEnabled = false;
+}
+
+// Mouse Drag Selection with exact pixel coordinates
 editorCanvas.addEventListener("mousedown", (e) => {
   isMouseDown = true;
   const rect = editorCanvas.getBoundingClientRect();
-  const px = Math.floor((e.clientX - rect.left) / canvasScale);
-  const py = Math.floor((e.clientY - rect.top) / canvasScale);
+  const px = Math.floor((e.clientX - rect.left) / (rect.width / project.frame_width));
+  const py = Math.floor((e.clientY - rect.top) / (rect.height / project.frame_height));
   dragStart = { x: px, y: py };
 });
 
 window.addEventListener("mousemove", (e) => {
   if (!isMouseDown || !project || !dragStart) return;
   const rect = editorCanvas.getBoundingClientRect();
-  const px = Math.floor((e.clientX - rect.left) / canvasScale);
-  const py = Math.floor((e.clientY - rect.top) / canvasScale);
+  const px = Math.floor((e.clientX - rect.left) / (rect.width / project.frame_width));
+  const py = Math.floor((e.clientY - rect.top) / (rect.height / project.frame_height));
 
   const clampedX = Math.max(0, Math.min(px, project.frame_width - 1));
   const clampedY = Math.max(0, Math.min(py, project.frame_height - 1));
