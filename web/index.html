@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>PixelWork Inspector</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Header / Project Control -->
+  <header id="header">
+    <div class="row header-row">
+      <div class="logo-area">
+        <strong>PixelWork</strong>
+        <span class="badge">Light Inspector</span>
+      </div>
+      <div class="row config-inputs">
+        <label>소스: <input type="text" id="input-source" value="src/len_atlas.png" style="width: 170px;"></label>
+        <label>W: <input type="number" id="input-fw" value="24" style="width: 50px;"></label>
+        <label>H: <input type="number" id="input-fh" value="32" style="width: 50px;"></label>
+        <button id="btn-slice" class="btn-primary">아틀라스 다시 읽기</button>
+      </div>
+      <div class="row reload-status">
+        <span class="hotreload-dot" title="외부 파일 변경 실시간 감지 중"></span>
+        <span id="hotreload-label">Hot Reload 활성</span>
+        <span id="status-msg"></span>
+      </div>
+    </div>
+  </header>
+
+  <div id="main-layout">
+    <!-- Left Column: Tracks & Animation Player -->
+    <aside id="left-panel">
+      <div class="panel-section">
+        <h3>애니메이션 트랙</h3>
+        <select id="track-select" size="8"></select>
+      </div>
+
+      <div class="panel-section player-box">
+        <h3>실시간 모션 플레이어</h3>
+        <div class="preview-wrap">
+          <canvas id="anim-canvas" width="96" height="128"></canvas>
+        </div>
+        <div class="player-controls">
+          <button id="btn-play" class="btn-ctrl">⏸ 정지 [Space]</button>
+          <div class="btn-step-group">
+            <button id="btn-prev" class="btn-step" title="이전 프레임 (← 키)">◀</button>
+            <span id="frame-indicator">0 / 0</span>
+            <button id="btn-next" class="btn-step" title="다음 프레임 (→ 키)">▶</button>
+          </div>
+        </div>
+        <div class="row delay-row">
+          <label for="delay-input">프레임 간격:</label>
+          <input type="number" id="delay-input" min="10" max="2000" step="10" value="120" style="width: 65px;">
+          <span>ms</span>
+          <input type="range" id="delay-slider" min="20" max="500" step="10" value="120" style="flex: 1;">
+        </div>
+        <div class="row" style="margin-top: 8px;">
+          <label class="checkbox-label">
+            <input type="checkbox" id="onion-toggle" checked> 어니언 스킨 (이전 프레임 겹치기)
+          </label>
+        </div>
+        <div class="shortcut-hint">
+          단축키: <code>←</code> / <code>→</code> 프레임 이동 | <code>Space</code> 재생·정지
+        </div>
+      </div>
+    </aside>
+
+    <!-- Center Column: Editor Canvas (Inspection & Region Selection) -->
+    <main id="center-panel">
+      <div class="canvas-bar">
+        <div class="frame-title">
+          현재 프레임: <strong id="cur-frame-name">-</strong>
+        </div>
+        <div class="row">
+          <label>배율:
+            <select id="scale-select" style="padding: 2px 6px;">
+              <option value="8">8x</option>
+              <option value="12">12x</option>
+              <option value="16" selected>16x (기본)</option>
+              <option value="20">20x</option>
+              <option value="24">24x</option>
+              <option value="32">32x</option>
+            </select>
+          </label>
+          <label class="checkbox-label"><input type="checkbox" id="grid-toggle" checked> 격자</label>
+          <button id="btn-clear-selection" class="btn-subtle">선택 해제</button>
+        </div>
+      </div>
+
+      <div id="canvas-container">
+        <canvas id="editor-canvas"></canvas>
+      </div>
+
+      <div class="selection-footer">
+        <span>선택 영역: <strong id="bbox-coords">마우스로 어색한 부위를 드래그하세요</strong></span>
+      </div>
+    </main>
+
+    <!-- Right Column: AI Feedback & Task Request -->
+    <aside id="right-panel">
+      <div class="panel-section">
+        <h3>AI에게 수정 요청 (Feedback Task)</h3>
+        <p class="desc">
+          캔버스에서 어색한 부위를 드래그로 지정하고 요구사항을 작성하면, AI가 16배 확대 인스펙션 뷰와 함께 전달받아 아틀라스를 수정합니다.
+        </p>
+
+        <div class="form-group">
+          <label>선택된 좌표:</label>
+          <div id="task-bbox-disp" class="info-box">영역 미선택</div>
+        </div>
+
+        <div class="form-group">
+          <label for="patch-instruction">어색한 부분 및 수정 요청:</label>
+          <textarea id="patch-instruction" rows="4" placeholder="예: 3번 프레임에서 뒷팔이 몸통 앞으로 튀어나와 있음. 몸통 뒤 레이어로 넘기고 어두운 톤으로 칠해줘."></textarea>
+        </div>
+
+        <button id="btn-send-task" class="btn-action">
+          🚀 AI에게 수정 요청 전송
+        </button>
+
+        <div id="task-notice" class="task-notice" style="display: none;"></div>
+      </div>
+
+      <!-- Inspection Preview -->
+      <div class="panel-section" id="inspect-section" style="display: none;">
+        <h4>생성된 비전 검수 뷰 (16x 확대)</h4>
+        <div class="inspect-grid">
+          <div class="inspect-card">
+            <span class="label">전체 컨텍스트</span>
+            <div class="img-wrap">
+              <img id="inspect-context-img">
+            </div>
+          </div>
+          <div class="inspect-card">
+            <span class="label">마이크로 좌표 격자</span>
+            <div class="img-wrap">
+              <img id="inspect-micro-img">
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

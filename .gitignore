@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.venv/
+venv/
+
+# Operating System
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Generated runtime data & cached frames
+data/*
+!data/.gitkeep
