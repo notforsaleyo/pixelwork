@@ -649,7 +649,7 @@ function showStatus(text, color = "#1a73e8") {
 loadProjectAndAllFrames();
 
 // --- 10. AI Task Completion Auto-Refresh ---
-let lastProjectVersion = 1;
+let lastProjectVersion = null;
 
 setInterval(async () => {
   try {
@@ -659,7 +659,7 @@ setInterval(async () => {
     
     // If version changed (AI completed task or user sliced atlas)
     if (data.version && data.version !== lastProjectVersion) {
-      const isInitial = (lastProjectVersion === 1);
+      const isInitial = (lastProjectVersion === null);
       lastProjectVersion = data.version;
 
       if (!isInitial) {
