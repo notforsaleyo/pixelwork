@@ -319,8 +319,9 @@ btnSendTask.addEventListener("click", async () => {
   const curTrack = loadedTracks[currentTrackIndex];
   const curFrame = curTrack.frames[currentFrameIndex];
 
-  showStatus("AI 작업 전송 중...", "#1a73e8");
   btnSendTask.disabled = true;
+  const origBtnText = btnSendTask.textContent;
+  btnSendTask.textContent = "⏳ 전송 중...";
 
   try {
     const res = await fetch("/api/task", {
@@ -337,8 +338,6 @@ btnSendTask.addEventListener("click", async () => {
     });
     const data = await res.json();
     if (data.status === "ok") {
-      showStatus("AI 작업 요청 저장 완료!", "#34a853");
-      
       setInspectData(
         true,
         "/" + data.task.inspect_views.context_image + "?t=" + Date.now(),
@@ -362,6 +361,7 @@ btnSendTask.addEventListener("click", async () => {
     alert("요청 에러: " + err);
   } finally {
     btnSendTask.disabled = false;
+    btnSendTask.textContent = origBtnText;
   }
 });
 
@@ -636,11 +636,13 @@ window.addEventListener("mouseup", () => {
 });
 
 function showStatus(text, color = "#1a73e8") {
-  statusMsg.textContent = text;
-  statusMsg.style.color = color;
-  setTimeout(() => {
-    statusMsg.textContent = "";
-  }, 4000);
+  if (statusMsg) {
+    statusMsg.textContent = text;
+    statusMsg.style.color = color;
+    setTimeout(() => {
+      if (statusMsg) statusMsg.textContent = "";
+    }, 4000);
+  }
 }
 
 // Initial Boot: Preload all frames into RAM
