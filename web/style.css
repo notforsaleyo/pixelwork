@@ -458,3 +458,45 @@ textarea {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* Vertical Layout for Pivot / Portrait QHD Monitors */
+.layout-vertical {
+  flex-direction: column !important;
+  overflow-y: auto !important;
+}
+
+.layout-vertical #center-panel {
+  order: 1 !important;
+  width: 100% !important;
+  min-height: 520px !important;
+  max-height: 700px !important;
+  flex: none !important;
+}
+
+.layout-vertical #right-panel {
+  order: 2 !important;
+  width: 100% !important;
+  border-left: none !important;
+  border-top: 1px solid #dadce0 !important;
+  border-bottom: 1px solid #dadce0 !important;
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  flex: none !important;
+  overflow: visible !important;
+}
+
+.layout-vertical #left-panel {
+  order: 3 !important;
+  width: 100% !important;
+  border-right: none !important;
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  flex: none !important;
+  overflow: visible !important;
+}
+
+.layout-vertical #track-select {
+  height: 220px !important;
+}

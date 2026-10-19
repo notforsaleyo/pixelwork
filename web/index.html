@@ -23,6 +23,12 @@
         <label>W: <input type="number" id="input-fw" value="24" style="width: 50px;"></label>
         <label>H: <input type="number" id="input-fh" value="32" style="width: 50px;"></label>
         <button type="button" id="btn-slice" class="btn-primary">🔄 아틀라스 다시 읽기</button>
+        <label style="margin-left: 8px;">레이아웃:
+          <select id="layout-select" style="padding: 3px 6px;">
+            <option value="horizontal">🖥️ 가로형 (기본)</option>
+            <option value="vertical">📱 세로형 (피벗 모니터)</option>
+          </select>
+        </label>
       </div>
       <div class="row status-area">
         <span id="status-msg"></span>

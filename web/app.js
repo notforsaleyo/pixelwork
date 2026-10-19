@@ -61,6 +61,27 @@ const fileNameDisp = document.getElementById("file-name-disp");
 
 const loadingOverlay = document.getElementById("loading-overlay");
 const loadingText = document.getElementById("loading-text");
+const mainLayout = document.getElementById("main-layout");
+const layoutSelect = document.getElementById("layout-select");
+
+function applyLayout(layoutMode) {
+  if (layoutMode === "vertical") {
+    mainLayout.classList.add("layout-vertical");
+  } else {
+    mainLayout.classList.remove("layout-vertical");
+  }
+  localStorage.setItem("pixelwork_layout", layoutMode);
+  layoutSelect.value = layoutMode;
+  renderCurrentFrame();
+}
+
+layoutSelect.addEventListener("change", (e) => {
+  applyLayout(e.target.value);
+  layoutSelect.blur();
+});
+
+// Load saved layout preference (defaults to horizontal)
+applyLayout(localStorage.getItem("pixelwork_layout") || "horizontal");
 
 function showLoading(msg) {
   loadingText.textContent = msg || "로딩 중...";
