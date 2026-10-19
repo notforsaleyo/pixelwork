@@ -47,6 +47,8 @@ const gridToggle = document.getElementById("grid-toggle");
 const curFrameName = document.getElementById("cur-frame-name");
 const bboxCoords = document.getElementById("bbox-coords");
 const taskBBoxDisp = document.getElementById("task-bbox-disp");
+const taskTrackDisp = document.getElementById("task-track-disp");
+const taskFrameDisp = document.getElementById("task-frame-disp");
 const patchInstruction = document.getElementById("patch-instruction");
 const btnSendTask = document.getElementById("btn-send-task");
 const taskNotice = document.getElementById("task-notice");
@@ -170,7 +172,7 @@ document.getElementById("btn-clear-selection").addEventListener("click", clearSe
 function clearSelection() {
   selectedBBox = null;
   bboxCoords.textContent = "마우스로 어색한 부위를 드래그하세요";
-  taskBBoxDisp.textContent = "영역 미선택";
+  if (taskBBoxDisp) taskBBoxDisp.textContent = "마우스로 영역을 드래그하세요";
   renderCurrentFrame();
 }
 
@@ -485,6 +487,8 @@ function renderCurrentFrame() {
   // Update text labels
   curFrameName.textContent = `${curTrack.name} [${currentFrameIndex + 1} / ${curTrack.frame_count}]`;
   frameIndicator.textContent = `${currentFrameIndex + 1} / ${curTrack.frame_count}`;
+  if (taskTrackDisp) taskTrackDisp.textContent = curTrack.name;
+  if (taskFrameDisp) taskFrameDisp.textContent = `${currentFrameIndex + 1}번 프레임`;
 
   // Get previous frame for onion skinning
   const prevIdx = (currentFrameIndex - 1 + curTrack.frame_count) % curTrack.frame_count;
