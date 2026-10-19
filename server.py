@@ -1,9 +1,9 @@
 """
 PixelWork Local Web Studio Backend.
 Features:
-- Automatic Hot Reload: detects when source atlas is modified externally (e.g. Aseprite/Photoshop)
-- Task Bridge: user marks area & types instruction -> saves structured task + 16x inspection views for AI
-- Frame & Atlas Serving with zero-caching
+- Dynamic Slicing & File Upload: users can pick or upload any atlas image
+- On-demand Reload: slices and refreshes when requested by the user
+- Task Dispatch: saves structured task requests with 16x inspection views
 """
 import os
 import sys
@@ -19,36 +19,12 @@ PORT = 8088
 PROJECT_STATE = {
     "source_image": "src/len_atlas.png",
     "frame_width": 24,
-    "frame_height": 32,
-    "last_mtime": 0
+    "frame_height": 32
 }
-
-def get_source_mtime():
-    src = PROJECT_STATE["source_image"]
-    if os.path.exists(src):
-        return os.path.getmtime(src)
-    return 0
-
-def check_and_sync_atlas():
-    """Checks if source image changed externally and re-slices if needed."""
-    current_mtime = get_source_mtime()
-    if current_mtime > PROJECT_STATE["last_mtime"]:
-        try:
-            print(f"[HotReload] Detected change in {PROJECT_STATE['source_image']}. Slicing...")
-            slice_spritesheet(
-                PROJECT_STATE["source_image"],
-                frame_w=PROJECT_STATE["frame_width"],
-                frame_h=PROJECT_STATE["frame_height"]
-            )
-            PROJECT_STATE["last_mtime"] = current_mtime
-            return True
-        except Exception as e:
-            print(f"[HotReload Error] {e}")
-    return False
 
 class PixelStudioHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
-        # Disable caching for live hot reloading
+        # Disable caching for live pixel updates
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
@@ -66,24 +42,7 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
         elif path == "/app.js":
             self.serve_file("web/app.js", "application/javascript; charset=utf-8")
             
-        elif path == "/api/status":
-            reloaded = check_and_sync_atlas()
-            task_info = None
-            if os.path.exists("data/task_request.json"):
-                try:
-                    with open("data/task_request.json", "r", encoding="utf-8") as f:
-                        task_info = json.load(f)
-                except Exception:
-                    pass
-            self.send_json({
-                "mtime": PROJECT_STATE["last_mtime"],
-                "reloaded": reloaded,
-                "source_image": PROJECT_STATE["source_image"],
-                "current_task": task_info
-            })
-
         elif path == "/api/project":
-            check_and_sync_atlas()
             self.send_json_file("data/metadata.json")
 
         elif path == "/api/frame":
@@ -110,8 +69,35 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-        
         content_len = int(self.headers.get("Content-Length", 0))
+
+        if path == "/api/upload":
+            # File picker upload handler
+            raw_filename = self.headers.get("X-Filename", "uploaded_atlas.png")
+            safe_name = os.path.basename(urllib.parse.unquote(raw_filename))
+            if not safe_name:
+                safe_name = "uploaded_atlas.png"
+            target_path = os.path.join("src", safe_name)
+            os.makedirs("src", exist_ok=True)
+
+            file_bytes = self.rfile.read(content_len)
+            with open(target_path, "wb") as f:
+                f.write(file_bytes)
+
+            fw = int(self.headers.get("X-Frame-Width", PROJECT_STATE["frame_width"]))
+            fh = int(self.headers.get("X-Frame-Height", PROJECT_STATE["frame_height"]))
+
+            PROJECT_STATE["source_image"] = target_path.replace("\\", "/")
+            PROJECT_STATE["frame_width"] = fw
+            PROJECT_STATE["frame_height"] = fh
+
+            try:
+                meta = slice_spritesheet(target_path, frame_w=fw, frame_h=fh)
+                self.send_json({"status": "ok", "file_path": target_path.replace("\\", "/"), "metadata": meta})
+            except Exception as e:
+                self.send_json({"status": "error", "message": str(e)}, status=500)
+            return
+
         post_data = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
         try:
             body = json.loads(post_data)
@@ -119,7 +105,7 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
             body = {}
 
         if path == "/api/slice":
-            # Dynamic slicing with user-defined frame dimensions & file path
+            # On-demand reload & re-slice button handler
             img_path = body.get("image_path", PROJECT_STATE["source_image"])
             fw = int(body.get("frame_width", PROJECT_STATE["frame_width"]))
             fh = int(body.get("frame_height", PROJECT_STATE["frame_height"]))
@@ -130,7 +116,6 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
             
             try:
                 meta = slice_spritesheet(img_path, frame_w=fw, frame_h=fh)
-                PROJECT_STATE["last_mtime"] = get_source_mtime()
                 self.send_json({"status": "ok", "metadata": meta})
             except Exception as e:
                 self.send_json({"status": "error", "message": str(e)}, status=500)
@@ -200,8 +185,6 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
         self.serve_file(file_path, "application/json; charset=utf-8")
 
 def run(port=PORT):
-    # Initial sync
-    PROJECT_STATE["last_mtime"] = get_source_mtime()
     if os.path.exists(PROJECT_STATE["source_image"]):
         slice_spritesheet(
             PROJECT_STATE["source_image"],
@@ -209,7 +192,7 @@ def run(port=PORT):
             frame_h=PROJECT_STATE["frame_height"]
         )
     server = HTTPServer(("127.0.0.1", port), PixelStudioHandler)
-    print(f"PixelWork Studio (Light Mode + Hot Reload) running at http://127.0.0.1:{port}/")
+    print(f"PixelWork Studio running at http://127.0.0.1:{port}/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

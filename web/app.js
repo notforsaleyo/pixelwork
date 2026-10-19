@@ -1,10 +1,13 @@
 /**
  * PixelWork Inspector Controller.
  * Features:
- * - Hot Reloading: polls server for file mtime changes from Aseprite/Photoshop
- * - Animation player with millisecond (ms) delay per frame
- * - Keyboard shortcuts: Arrow keys (Left/Right) for frame scrubbing, Spacebar for Play/Pause
- * - Bounding box region selection & AI Task dispatch with 16x inspection views
+ * - Direct zoom scale input (1 to 32)
+ * - Spacebar and Arrow key controls without losing focus to buttons/sliders
+ * - On-demand reload (no hot reload overhead)
+ * - Immediate frame & animation preview update on track selection even when paused
+ * - Clear selection on ESC or track switch
+ * - File picker for easy image selection & upload
+ * - Auto-clear text & selection after task dispatch
  */
 
 let project = null;
@@ -16,7 +19,6 @@ let frameDelayMs = 120; // Default 120ms
 
 let currentFrameImg = null;
 let prevFrameImg = null;
-let lastKnownMtime = 0;
 
 // Editor Canvas State
 let canvasScale = 16;
@@ -40,7 +42,7 @@ const btnPrev = document.getElementById("btn-prev");
 const btnNext = document.getElementById("btn-next");
 const frameIndicator = document.getElementById("frame-indicator");
 const delayInput = document.getElementById("delay-input");
-const delaySlider = document.getElementById("delay-slider");
+const scaleInput = document.getElementById("scale-input");
 const onionToggle = document.getElementById("onion-toggle");
 const gridToggle = document.getElementById("grid-toggle");
 const curFrameName = document.getElementById("cur-frame-name");
@@ -54,16 +56,38 @@ const inspectContextImg = document.getElementById("inspect-context-img");
 const inspectMicroImg = document.getElementById("inspect-micro-img");
 const statusMsg = document.getElementById("status-msg");
 
-// --- 1. Keyboard Shortcuts (Arrow Left/Right, Spacebar) ---
+const filePicker = document.getElementById("file-picker");
+const btnFilePick = document.getElementById("btn-file-pick");
+const fileNameDisp = document.getElementById("file-name-disp");
+
+// Blur buttons after click so Spacebar doesn't re-trigger button clicks
+document.querySelectorAll("button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    btn.blur();
+  });
+});
+
+// --- 1. Keyboard Shortcuts (Arrow Left/Right, Spacebar, ESC) ---
 window.addEventListener("keydown", (e) => {
-  // If user is typing in an input or textarea, ignore shortcuts
-  const tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : "";
-  if (tag === "input" || tag === "textarea" || tag === "select") {
+  const active = document.activeElement;
+  const isTextInput = active && (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && (active.type === "text" || active.type === "number")));
+
+  // ESC: Always clears selection even when input is focused
+  if (e.code === "Escape") {
+    e.preventDefault();
+    clearSelection();
+    if (active) active.blur();
+    return;
+  }
+
+  // If typing inside an input/textarea, let normal typing happen
+  if (isTextInput) {
     return;
   }
 
   if (e.code === "Space") {
     e.preventDefault();
+    if (active) active.blur();
     togglePlayPause();
   } else if (e.code === "ArrowLeft") {
     e.preventDefault();
@@ -77,8 +101,11 @@ window.addEventListener("keydown", (e) => {
 function togglePlayPause() {
   isPlaying = !isPlaying;
   btnPlay.textContent = isPlaying ? "⏸ 정지 [Space]" : "▶ 재생 [Space]";
-  if (isPlaying) startAnimation();
-  else clearInterval(animTimer);
+  if (isPlaying) {
+    startAnimation();
+  } else {
+    clearInterval(animTimer);
+  }
 }
 
 btnPlay.addEventListener("click", togglePlayPause);
@@ -90,22 +117,15 @@ delayInput.addEventListener("input", (e) => {
   let val = parseInt(e.target.value, 10);
   if (isNaN(val) || val < 10) val = 10;
   frameDelayMs = val;
-  delaySlider.value = val;
   if (isPlaying) startAnimation();
 });
 
-delaySlider.addEventListener("input", (e) => {
-  frameDelayMs = parseInt(e.target.value, 10);
-  delayInput.value = frameDelayMs;
-  if (isPlaying) startAnimation();
-});
-
-onionToggle.addEventListener("change", renderEditor);
-gridToggle.addEventListener("change", renderEditor);
-
-const scaleSelect = document.getElementById("scale-select");
-scaleSelect.addEventListener("change", (e) => {
-  canvasScale = parseInt(e.target.value, 10);
+// --- 3. Zoom Scale Input (1 to 32) ---
+scaleInput.addEventListener("input", (e) => {
+  let val = parseInt(e.target.value, 10);
+  if (isNaN(val) || val < 1) val = 1;
+  if (val > 32) val = 32;
+  canvasScale = val;
   if (project) {
     editorCanvas.width = project.frame_width * canvasScale;
     editorCanvas.height = project.frame_height * canvasScale;
@@ -113,20 +133,62 @@ scaleSelect.addEventListener("change", (e) => {
   }
 });
 
-document.getElementById("btn-clear-selection").addEventListener("click", () => {
+onionToggle.addEventListener("change", renderEditor);
+gridToggle.addEventListener("change", renderEditor);
+
+document.getElementById("btn-clear-selection").addEventListener("click", clearSelection);
+
+function clearSelection() {
   selectedBBox = null;
   bboxCoords.textContent = "마우스로 어색한 부위를 드래그하세요";
   taskBBoxDisp.textContent = "영역 미선택";
   renderEditor();
+}
+
+// --- 4. File Picker & Upload Handler ---
+btnFilePick.addEventListener("click", () => {
+  filePicker.click();
 });
 
-// --- 3. Reload Atlas Button ---
+filePicker.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const fw = parseInt(document.getElementById("input-fw").value, 10) || 24;
+  const fh = parseInt(document.getElementById("input-fh").value, 10) || 32;
+
+  showStatus("파일 업로드 및 슬라이싱 중...", "#1a73e8");
+  try {
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      headers: {
+        "X-Filename": encodeURIComponent(file.name),
+        "X-Frame-Width": fw,
+        "X-Frame-Height": fh
+      },
+      body: file
+    });
+    const data = await res.json();
+    if (data.status === "ok") {
+      fileNameDisp.textContent = data.file_path;
+      fileNameDisp.title = data.file_path;
+      showStatus("업로드 완료!", "#34a853");
+      await loadProject(false);
+    } else {
+      showStatus("에러: " + data.message, "#d93025");
+    }
+  } catch (err) {
+    showStatus("업로드 실패: " + err, "#d93025");
+  }
+});
+
+// --- 5. On-Demand Reload Atlas Button ---
 document.getElementById("btn-slice").addEventListener("click", async () => {
-  const image_path = document.getElementById("input-source").value.trim();
-  const frame_w = parseInt(document.getElementById("input-fw").value, 10);
-  const frame_h = parseInt(document.getElementById("input-fh").value, 10);
+  const image_path = fileNameDisp.textContent.trim() || "src/len_atlas.png";
+  const frame_w = parseInt(document.getElementById("input-fw").value, 10) || 24;
+  const frame_h = parseInt(document.getElementById("input-fh").value, 10) || 32;
   
-  showStatus("아틀라스 읽는 중...", "#1a73e8");
+  showStatus("아틀라스 다시 읽는 중...", "#1a73e8");
   try {
     const res = await fetch("/api/slice", {
       method: "POST",
@@ -145,7 +207,7 @@ document.getElementById("btn-slice").addEventListener("click", async () => {
   }
 });
 
-// --- 4. AI Task Dispatch ---
+// --- 6. AI Task Dispatch ---
 btnSendTask.addEventListener("click", async () => {
   if (!selectedBBox) {
     alert("캔버스에서 어색한 부위를 먼저 마우스로 드래그하여 선택하세요.");
@@ -181,7 +243,7 @@ btnSendTask.addEventListener("click", async () => {
     if (data.status === "ok") {
       showStatus("AI 작업 요청 저장 완료!", "#34a853");
       
-      // Show inspect images
+      // Show inspect preview views
       inspectSection.style.display = "block";
       inspectContextImg.src = "/" + data.task.inspect_views.context_image + "?t=" + Date.now();
       inspectMicroImg.src = "/" + data.task.inspect_views.micro_image + "?t=" + Date.now();
@@ -193,6 +255,10 @@ btnSendTask.addEventListener("click", async () => {
         <strong>영역</strong>: X(${selectedBBox[0]}~${selectedBBox[1]}), Y(${selectedBBox[2]}~${selectedBBox[3]})<br>
         채팅창에서 <strong>"방금 보낸 작업 진행해줘"</strong>라고 말씀하시면 즉시 수정을 진행합니다.
       `;
+
+      // Clear input and selection
+      patchInstruction.value = "";
+      clearSelection();
     } else {
       alert("작업 전송 실패: " + data.message);
     }
@@ -203,10 +269,10 @@ btnSendTask.addEventListener("click", async () => {
   }
 });
 
-// --- 5. Project Loader & Frame Management ---
+// --- 7. Project Loader & Frame Management ---
 async function loadProject(preserveSelection = false) {
   try {
-    const res = await fetch("/api/project");
+    const res = await fetch("/api/project?t=" + Date.now());
     if (!res.ok) return;
     project = await res.json();
     
@@ -216,8 +282,10 @@ async function loadProject(preserveSelection = false) {
     framePixelCanvas.width = project.frame_width;
     framePixelCanvas.height = project.frame_height;
 
-    const scaleVal = document.getElementById("scale-select");
-    if (scaleVal) canvasScale = parseInt(scaleVal.value, 10) || 16;
+    const scaleVal = parseInt(scaleInput.value, 10);
+    if (!isNaN(scaleVal) && scaleVal >= 1 && scaleVal <= 32) {
+      canvasScale = scaleVal;
+    }
 
     editorCanvas.width = project.frame_width * canvasScale;
     editorCanvas.height = project.frame_height * canvasScale;
@@ -241,23 +309,32 @@ async function loadProject(preserveSelection = false) {
     }
     trackSelect.selectedIndex = currentTrackIndex;
 
-    selectTrack(currentTrackIndex, preserveSelection);
+    await selectTrack(currentTrackIndex, preserveSelection);
   } catch (err) {
     console.error("Error loading project:", err);
   }
 }
 
+// Track selection handlers (support change, click, input)
 trackSelect.addEventListener("change", (e) => {
   selectTrack(parseInt(e.target.value, 10), false);
+  trackSelect.blur();
 });
 
-function selectTrack(trackIdx, preserveFrame = false) {
+async function selectTrack(trackIdx, preserveFrame = false) {
   currentTrackIndex = trackIdx;
   if (!preserveFrame) {
     currentFrameIndex = 0;
   }
-  startAnimation();
-  loadFrame(currentFrameIndex);
+  clearSelection();
+
+  // Load first frame immediately
+  await loadFrame(currentFrameIndex, true);
+
+  // If currently playing, restart animation timer for the new track
+  if (isPlaying) {
+    startAnimation();
+  }
 }
 
 async function loadFrame(index, forceReload = true) {
@@ -272,16 +349,20 @@ async function loadFrame(index, forceReload = true) {
 
   const cacheBuster = forceReload ? `?t=${Date.now()}` : "";
   const curUrl = `/api/frame?file=${frameInfo.file}${cacheBuster}`;
-  currentFrameImg = await loadImage(curUrl);
 
-  // Previous frame for onion skin
   const prevIdx = (currentFrameIndex - 1 + curTrack.frame_count) % curTrack.frame_count;
   const prevFrameInfo = curTrack.frames[prevIdx];
   const prevUrl = `/api/frame?file=${prevFrameInfo.file}${cacheBuster}`;
-  prevFrameImg = await loadImage(prevUrl);
+
+  // Load both images in parallel
+  const [curImg, pImg] = await Promise.all([loadImage(curUrl), loadImage(prevUrl)]);
+  currentFrameImg = curImg;
+  prevFrameImg = pImg;
 
   frameCtx.clearRect(0, 0, framePixelCanvas.width, framePixelCanvas.height);
-  frameCtx.drawImage(currentFrameImg, 0, 0);
+  if (currentFrameImg) {
+    frameCtx.drawImage(currentFrameImg, 0, 0);
+  }
 
   renderEditor();
 }
@@ -311,7 +392,7 @@ function startAnimation() {
   }, frameDelayMs);
 }
 
-// --- 6. Editor Rendering & Box Selection ---
+// --- 8. Editor Rendering & Box Selection ---
 function renderEditor() {
   if (!project) return;
   const fw = project.frame_width;
@@ -415,24 +496,6 @@ window.addEventListener("mousemove", (e) => {
 window.addEventListener("mouseup", () => {
   isMouseDown = false;
 });
-
-// --- 7. Hot Reload Poller (Every 800ms) ---
-setInterval(async () => {
-  try {
-    const res = await fetch("/api/status");
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data.mtime && data.mtime !== lastKnownMtime) {
-      if (lastKnownMtime !== 0) {
-        showStatus("⚡ 외부 수정 감지! 아틀라스 갱신됨", "#1a73e8");
-        await loadProject(true);
-      }
-      lastKnownMtime = data.mtime;
-    }
-  } catch (e) {
-    // server momentarily offline or restarting
-  }
-}, 800);
 
 function showStatus(text, color = "#1a73e8") {
   statusMsg.textContent = text;

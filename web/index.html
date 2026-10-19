@@ -11,17 +11,20 @@
     <div class="row header-row">
       <div class="logo-area">
         <strong>PixelWork</strong>
-        <span class="badge">Light Inspector</span>
+        <span class="badge">Inspector</span>
       </div>
       <div class="row config-inputs">
-        <label>소스: <input type="text" id="input-source" value="src/len_atlas.png" style="width: 170px;"></label>
+        <!-- File Picker -->
+        <label>소스 파일:
+          <input type="file" id="file-picker" accept="image/png,image/jpeg,image/webp" style="display: none;">
+          <button type="button" id="btn-file-pick" class="btn-subtle">📁 파일 선택...</button>
+          <span id="file-name-disp" class="file-name-tag" title="src/len_atlas.png">src/len_atlas.png</span>
+        </label>
         <label>W: <input type="number" id="input-fw" value="24" style="width: 50px;"></label>
         <label>H: <input type="number" id="input-fh" value="32" style="width: 50px;"></label>
-        <button id="btn-slice" class="btn-primary">아틀라스 다시 읽기</button>
+        <button type="button" id="btn-slice" class="btn-primary">🔄 아틀라스 다시 읽기</button>
       </div>
-      <div class="row reload-status">
-        <span class="hotreload-dot" title="외부 파일 변경 실시간 감지 중"></span>
-        <span id="hotreload-label">Hot Reload 활성</span>
+      <div class="row status-area">
         <span id="status-msg"></span>
       </div>
     </div>
@@ -41,18 +44,17 @@
           <canvas id="anim-canvas" width="96" height="128"></canvas>
         </div>
         <div class="player-controls">
-          <button id="btn-play" class="btn-ctrl">⏸ 정지 [Space]</button>
+          <button type="button" id="btn-play" class="btn-ctrl">⏸ 정지 [Space]</button>
           <div class="btn-step-group">
-            <button id="btn-prev" class="btn-step" title="이전 프레임 (← 키)">◀</button>
+            <button type="button" id="btn-prev" class="btn-step" title="이전 프레임 (← 키)">◀</button>
             <span id="frame-indicator">0 / 0</span>
-            <button id="btn-next" class="btn-step" title="다음 프레임 (→ 키)">▶</button>
+            <button type="button" id="btn-next" class="btn-step" title="다음 프레임 (→ 키)">▶</button>
           </div>
         </div>
         <div class="row delay-row">
           <label for="delay-input">프레임 간격:</label>
-          <input type="number" id="delay-input" min="10" max="2000" step="10" value="120" style="width: 65px;">
+          <input type="number" id="delay-input" min="10" max="2000" step="10" value="120" style="width: 70px;">
           <span>ms</span>
-          <input type="range" id="delay-slider" min="20" max="500" step="10" value="120" style="flex: 1;">
         </div>
         <div class="row" style="margin-top: 8px;">
           <label class="checkbox-label">
@@ -60,7 +62,7 @@
           </label>
         </div>
         <div class="shortcut-hint">
-          단축키: <code>←</code> / <code>→</code> 프레임 이동 | <code>Space</code> 재생·정지
+          단축키: <code>←</code> / <code>→</code> 프레임 이동 | <code>Space</code> 재생·정지 | <code>ESC</code> 선택 해제
         </div>
       </div>
     </aside>
@@ -72,18 +74,12 @@
           현재 프레임: <strong id="cur-frame-name">-</strong>
         </div>
         <div class="row">
+          <!-- Direct scale input (1 to 32) -->
           <label>배율:
-            <select id="scale-select" style="padding: 2px 6px;">
-              <option value="8">8x</option>
-              <option value="12">12x</option>
-              <option value="16" selected>16x (기본)</option>
-              <option value="20">20x</option>
-              <option value="24">24x</option>
-              <option value="32">32x</option>
-            </select>
+            <input type="number" id="scale-input" min="1" max="32" value="16" style="width: 50px; text-align: center;"> 배
           </label>
           <label class="checkbox-label"><input type="checkbox" id="grid-toggle" checked> 격자</label>
-          <button id="btn-clear-selection" class="btn-subtle">선택 해제</button>
+          <button type="button" id="btn-clear-selection" class="btn-subtle">선택 해제 (ESC)</button>
         </div>
       </div>
 
@@ -114,7 +110,7 @@
           <textarea id="patch-instruction" rows="4" placeholder="예: 3번 프레임에서 뒷팔이 몸통 앞으로 튀어나와 있음. 몸통 뒤 레이어로 넘기고 어두운 톤으로 칠해줘."></textarea>
         </div>
 
-        <button id="btn-send-task" class="btn-action">
+        <button type="button" id="btn-send-task" class="btn-action">
           🚀 AI에게 수정 요청 전송
         </button>
 
