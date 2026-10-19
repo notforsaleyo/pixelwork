@@ -3,7 +3,7 @@ PixelWork Local Web Studio Backend.
 Features:
 - Dynamic Slicing & File Upload: users can pick or upload any atlas image
 - On-demand Reload: slices and refreshes when requested by the user
-- Task Dispatch: saves structured task requests with 16x inspection views
+- Task Dispatch & Completion: saves tasks, deletes upon completion, bumps project version for UI update
 """
 import os
 import sys
@@ -19,7 +19,8 @@ PORT = 8088
 PROJECT_STATE = {
     "source_image": "src/len_atlas.png",
     "frame_width": 24,
-    "frame_height": 32
+    "frame_height": 32,
+    "version": 1
 }
 
 class PixelStudioHandler(SimpleHTTPRequestHandler):
@@ -44,6 +45,13 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
             
         elif path == "/api/project":
             self.send_json_file("data/metadata.json")
+
+        elif path == "/api/version":
+            has_task = os.path.exists("data/task_request.json")
+            self.send_json({
+                "version": PROJECT_STATE["version"],
+                "has_task": has_task
+            })
 
         elif path == "/api/atlas":
             src = PROJECT_STATE["source_image"]
@@ -79,7 +87,6 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
         content_len = int(self.headers.get("Content-Length", 0))
 
         if path == "/api/upload":
-            # File picker upload handler
             raw_filename = self.headers.get("X-Filename", "uploaded_atlas.png")
             safe_name = os.path.basename(urllib.parse.unquote(raw_filename))
             if not safe_name:
@@ -97,10 +104,11 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
             PROJECT_STATE["source_image"] = target_path.replace("\\", "/")
             PROJECT_STATE["frame_width"] = fw
             PROJECT_STATE["frame_height"] = fh
+            PROJECT_STATE["version"] += 1
 
             try:
                 meta = slice_spritesheet(target_path, frame_w=fw, frame_h=fh)
-                self.send_json({"status": "ok", "file_path": target_path.replace("\\", "/"), "metadata": meta})
+                self.send_json({"status": "ok", "file_path": target_path.replace("\\", "/"), "metadata": meta, "version": PROJECT_STATE["version"]})
             except Exception as e:
                 self.send_json({"status": "error", "message": str(e)}, status=500)
             return
@@ -112,7 +120,6 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
             body = {}
 
         if path == "/api/slice":
-            # On-demand reload & re-slice button handler
             img_path = body.get("image_path", PROJECT_STATE["source_image"])
             fw = int(body.get("frame_width", PROJECT_STATE["frame_width"]))
             fh = int(body.get("frame_height", PROJECT_STATE["frame_height"]))
@@ -120,15 +127,15 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
             PROJECT_STATE["source_image"] = img_path
             PROJECT_STATE["frame_width"] = fw
             PROJECT_STATE["frame_height"] = fh
+            PROJECT_STATE["version"] += 1
             
             try:
                 meta = slice_spritesheet(img_path, frame_w=fw, frame_h=fh)
-                self.send_json({"status": "ok", "metadata": meta})
+                self.send_json({"status": "ok", "metadata": meta, "version": PROJECT_STATE["version"]})
             except Exception as e:
                 self.send_json({"status": "error", "message": str(e)}, status=500)
 
         elif path == "/api/task":
-            # User submits a region fix request for AI
             track_id = body.get("track_id")
             track_name = body.get("track_name", "")
             frame_index = body.get("frame_index")
@@ -162,6 +169,26 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
                 self.send_json({"status": "ok", "task": task_data})
             except Exception as e:
                 self.send_json({"status": "error", "message": str(e)}, status=500)
+
+        elif path == "/api/task/complete":
+            # Deletes task request and temporary inspection views, bumps version
+            for f in ["data/task_request.json", "data/task_context.png", "data/task_micro.png"]:
+                if os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+            # Re-slice to ensure all frames are fresh
+            try:
+                slice_spritesheet(
+                    PROJECT_STATE["source_image"],
+                    frame_w=PROJECT_STATE["frame_width"],
+                    frame_h=PROJECT_STATE["frame_height"]
+                )
+            except Exception:
+                pass
+            PROJECT_STATE["version"] += 1
+            self.send_json({"status": "ok", "version": PROJECT_STATE["version"]})
         else:
             self.send_error(404, "Endpoint not found")
 

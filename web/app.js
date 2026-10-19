@@ -590,3 +590,32 @@ function showStatus(text, color = "#1a73e8") {
 
 // Initial Boot: Preload all frames into RAM
 loadProjectAndAllFrames();
+
+// --- 10. AI Task Completion Auto-Refresh ---
+let lastProjectVersion = 1;
+
+setInterval(async () => {
+  try {
+    const res = await fetch("/api/version");
+    if (!res.ok) return;
+    const data = await res.json();
+    
+    // If version changed (AI completed task or user sliced atlas)
+    if (data.version && data.version !== lastProjectVersion) {
+      const isInitial = (lastProjectVersion === 1);
+      lastProjectVersion = data.version;
+
+      if (!isInitial) {
+        await loadProjectAndAllFrames(true);
+        inspectSection.style.display = "none";
+        taskNotice.style.display = "block";
+        taskNotice.innerHTML = "<strong>✨ AI 작업 완료!</strong><br>수정된 최신 아틀라스가 화면에 반영되었습니다.";
+        setTimeout(() => {
+          taskNotice.style.display = "none";
+        }, 5000);
+      }
+    }
+  } catch (e) {
+    // server momentarily offline
+  }
+}, 1000);
