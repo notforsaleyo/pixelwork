@@ -479,11 +479,15 @@ textarea {
   border-left: none !important;
   border-top: 1px solid #dadce0 !important;
   border-bottom: 1px solid #dadce0 !important;
-  display: grid !important;
-  grid-template-columns: 1fr 1fr;
+  display: flex !important;
+  flex-direction: column !important;
   gap: 16px;
   flex: none !important;
   overflow: visible !important;
+}
+
+.layout-vertical #right-panel .panel-section {
+  width: 100% !important;
 }
 
 .layout-vertical #left-panel {
