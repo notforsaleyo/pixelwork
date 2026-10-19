@@ -171,22 +171,13 @@ class PixelStudioHandler(SimpleHTTPRequestHandler):
                 self.send_json({"status": "error", "message": str(e)}, status=500)
 
         elif path == "/api/task/complete":
-            # Deletes task request and temporary inspection views, bumps version
+            # Deletes task request and temporary inspection views, bumps version instantly
             for f in ["data/task_request.json", "data/task_context.png", "data/task_micro.png"]:
                 if os.path.exists(f):
                     try:
                         os.remove(f)
                     except Exception:
                         pass
-            # Re-slice to ensure all frames are fresh
-            try:
-                slice_spritesheet(
-                    PROJECT_STATE["source_image"],
-                    frame_w=PROJECT_STATE["frame_width"],
-                    frame_h=PROJECT_STATE["frame_height"]
-                )
-            except Exception:
-                pass
             PROJECT_STATE["version"] += 1
             self.send_json({"status": "ok", "version": PROJECT_STATE["version"]})
         else:
