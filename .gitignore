@@ -15,3 +15,7 @@ Desktop.ini
 # Generated runtime data & cached frames
 data/*
 !data/.gitkeep
+
+# Source assets
+src/*
+!src/.gitkeep
